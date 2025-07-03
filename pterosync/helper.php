@@ -578,39 +578,20 @@ function pteroSyncfindFreePortsForVariables($ips_data, &$variables)
         $foundAll = true;
 
         foreach ($variables as $var => $range) {
-            list($start, $end) = explode('-', $range);
-            $start = (int) $start;
-            $end = (int) $end;
+            $parts = explode('-', $range);
+            $start = (int)$parts[0];
+            $end = isset($parts[1]) ? (int)$parts[1] : $start;
             $foundPort = false;
 
             foreach ($ports as $port) {
-                if ($port['assigned'] == 1) continue; // Skip assigned ports
+                // For SERVER_PORT, allow assigned port; for others, only allow unassigned
+                if ($var !== 'SERVER_PORT' && $port['assigned'] == 1) continue;
 
                 if (!isset($allocatedPorts[$port['id']]) && $port['port'] >= $start && $port['port'] <= $end) {
                     $port['ip'] = $ip;
                     $freePorts[$var] = $port;
                     $allocatedPorts[$port['id']] = $port['port'];
                     $foundPort = true;
-
-
-//                    if ($var === 'SERVER_PORT' && !isset($variables['SERVER_PORT_OFFSET']) && PteroSyncInstance::get()->server_port_offset > 0) {
-//                        $offsetValue = $port['port'] + PteroSyncInstance::get()->server_port_offset;
-//
-//                        PteroSyncInstance::get()->addFileLog([
-//                            'offset' => $offsetValue,
-//                            'port' => $port['port']
-//                        ], 'New server port found!');
-//
-//                        // Find a matching offset port in the available ports
-//                        foreach ($ports as $offsetPort) {
-//                            if ($offsetPort['port'] == $offsetValue && !$offsetPort['assigned']) {
-//                                $offsetPort['ip'] = $ip;
-//                                $freePorts['SERVER_PORT_OFFSET'] = $offsetPort;
-//                                break;
-//                            }
-//                        }
-//                    }
-
                     break; // Stop searching once a valid port is found for this variable
                 }
             }
@@ -637,11 +618,14 @@ function pteroSyncfindFreePortsForAllVariablesOnIP($ports, $variables, $_SERVER_
     $allocatedPorts = []; // Store allocated ports
 
     foreach ($variables as $var => $range) {
-        list($start, $end) = explode('-', $range);
+        $parts = explode('-', $range);
+        $start = (int)$parts[0];
+        $end = isset($parts[1]) ? (int)$parts[1] : $start;
         $foundPort = false;
 
         foreach ($ports as $port) {
-            if ($port['assigned'] == 1) continue;
+            // For SERVER_PORT, allow assigned port; for others, only allow unassigned
+            if ($var !== 'SERVER_PORT' && $port['assigned'] == 1) continue;
             if (!isset($allocatedPorts[$port['id']])) {
                 if ($port['port'] >= $start && $port['port'] <= $end) {
                     $port['ip'] = $_SERVER_IP;
@@ -651,8 +635,6 @@ function pteroSyncfindFreePortsForAllVariablesOnIP($ports, $variables, $_SERVER_
                     break;
                 }
             }
-
-
         }
 
         if (!$foundPort) {

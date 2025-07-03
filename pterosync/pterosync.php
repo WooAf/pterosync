@@ -441,6 +441,33 @@ function pterosync_CreateAccount(array $params)
             }
         }
 
+        // Pre-check: Ensure all required ports are available before creating the server
+        $nestId = pteroSyncGetOption($params, 'nest_id');
+        $eggId = pteroSyncGetOption($params, 'egg_id');
+        $eggData = pteroSyncApplicationApi($params, 'nests/' . $nestId . '/eggs/' . $eggId . '?include=variables');
+        if ($eggData['status_code'] !== 200) throw new Exception('Failed to get egg data, received error code: ' . $eggData['status_code'] . '. Enable module debug log for more info.');
+        if ($portsArray) {
+            pteroSyncProcessAllocations($eggData, $portsArray);
+        }
+        $location_id = pteroSyncGetOption($params, 'location_id');
+        $nodes = pteroSyncApplicationApi($params, 'nodes?include=allocations');
+        $targetNode = null;
+        $allocations = [];
+        foreach ($nodes['data'] as $nodeData) {
+            if ($nodeData['attributes']['location_id'] == $location_id) {
+                $targetNode = $nodeData['attributes'];
+                $allocations = $nodeData['attributes']['relationships']['allocations']['data'];
+                break;
+            }
+        }
+        if (!$targetNode) throw new Exception('No node found for the selected location.');
+        PteroSyncInstance::get()->node_allocations = $allocations;
+        $ips = pteroSyncMakeIParray();
+        $foundPorts = pteroSyncfindPorts($portsArray, $ips);
+        if (!$foundPorts || count($foundPorts) < count(PteroSyncInstance::get()->variables)) {
+            throw new Exception('Not all required ports are available for this server. Please adjust your port ranges or try again later.');
+        }
+
         $serverId = pteroSyncGetServer($params);
         if ($serverId) throw new Exception('Failed to create server because it is already created.');
         $customFieldId = pteroSyncGetCustomFieldId($params);
@@ -461,9 +488,6 @@ function pterosync_CreateAccount(array $params)
         } else {
             throw new Exception('Failed to create user, received error code: ' . $userResult['status_code'] . '. Enable module debug log for more info.');
         }
-
-        $nestId = pteroSyncGetOption($params, 'nest_id');
-        $eggId = pteroSyncGetOption($params, 'egg_id');
 
         $eggData = pteroSyncApplicationApi($params, 'nests/' . $nestId . '/eggs/' . $eggId . '?include=variables');
         if ($eggData['status_code'] !== 200) throw new Exception('Failed to get egg data, received error code: ' . $eggData['status_code'] . '. Enable module debug log for more info.');
@@ -505,7 +529,6 @@ function pterosync_CreateAccount(array $params)
         $io = pteroSyncGetOption($params, 'io');
         $cpu = pteroSyncGetOption($params, 'cpu');
 
-        $location_id = pteroSyncGetOption($params, 'location_id');
         $dedicated_ip = (bool)pteroSyncGetOption($params, 'dedicated_ip');
         $dedicated_port = (bool)pteroSyncGetOption($params, 'dedicated_port');
         PteroSyncInstance::get()->dedicated_ip = $dedicated_ip;
@@ -622,19 +645,20 @@ function pterosync_CreateAccount(array $params)
             pteroSyncLog('Found ports', 'Found ports.', $foundPorts);
             $_SERVER_PORT_ID = $serverAllocations[0]['attributes']['id'];
 
-            $allocationArray['allocation'] = $_SERVER_PORT_ID;
-            if (isset($foundPorts['SERVER_PORT'])) {
-                $allocationArray['allocation'] = $foundPorts['SERVER_PORT']['id'];
-                $allocationArray['remove_allocations'] = [$_SERVER_PORT_ID];
-            }
-
+            $allocationArray = [];
             $environment = [];
             $additional = [];
             foreach ($foundPorts as $key => $var) {
                 $environment[$key] = "" . $var['port'] . "";
-                $additional[] = $var['id'];
-                $maximumAllocations++;
+                if ($key !== 'SERVER_PORT') {
+                    $additional[] = $var['id'];
+                    $maximumAllocations++;
+                }
             }
+
+            // Always set the main allocation to SERVER_PORT
+            $allocationArray['allocation'] = $foundPorts['SERVER_PORT']['id'];
+            $allocationArray['add_allocations'] = $additional;
 
             if (PteroSyncInstance::get()->getDynamicEnvironmentArray()) {
                 PteroSyncInstance::get()->addFileLog(PteroSyncInstance::get()->getDynamicEnvironmentArray(), 'Setting Dynamic Environment');
@@ -647,7 +671,6 @@ function pterosync_CreateAccount(array $params)
             if (isset($environment['SERVER_PORT'])) {
                 unset($environment['SERVER_PORT']);
             }
-            $allocationArray['add_allocations'] = $additional;
 
             $newServerArray = array_merge([
                 'memory' => (int)$memory,
